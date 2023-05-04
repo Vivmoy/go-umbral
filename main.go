@@ -16,9 +16,15 @@ func main() {
 	if err2 != nil {
 		fmt.Println("Encrypt() error:", err2.Error())
 	}
-	plain, err3 := recrypt.Decrypt(pri, cipher)
+	err3 := recrypt.CheckCapsule(cipher.Capsule)
 	if err3 != nil {
-		fmt.Println("Decrypt() error:", err3.Error())
+		fmt.Println("CheckCapsule() error:", err3.Error())
+	} else {
+		fmt.Println("CheckCapsule() success")
+	}
+	plain, err4 := recrypt.Decrypt(pri, cipher)
+	if err4 != nil {
+		fmt.Println("Decrypt() error:", err4.Error())
 	}
 	fmt.Println(string(plain))
 }

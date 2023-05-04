@@ -3,6 +3,7 @@ package recrypt
 import (
 	"crypto/ecdsa"
 	"encoding/hex"
+	"fmt"
 	"goUmbral/curve"
 	"goUmbral/math"
 	"goUmbral/utils"
@@ -91,4 +92,18 @@ func Decrypt(aPriKey *ecdsa.PrivateKey, cipher *Cipher_before_re) (plainText []b
 	// mark keyBytes[:12] as nonce
 	plainText, err = GCMDecrypt(cipher.CipherText, key[:32], keyBytes[:12], nil)
 	return plainText, err
+}
+
+func CheckCapsule(capsule *Capsule) (err error) {
+	left := curve.BigIntMulBase(capsule.S)
+	h1 := utils.HashToCurve(
+		utils.ConcatBytes(
+			curve.PointToBytes(capsule.E),
+			curve.PointToBytes(capsule.V)))
+	h2 := curve.PointScalarMul(capsule.E, h1)
+	right := curve.PointScalarAdd(capsule.V, h2)
+	if left.Equal(right) {
+		return nil
+	}
+	return fmt.Errorf("%s", "Capsule not match")
 }
