@@ -23,6 +23,11 @@ type Cipher_before_re struct {
 	Capsule    *Capsule
 }
 
+type Cipher_after_re struct {
+	CF         []CFrag
+	CipherText []byte
+}
+
 type KFrag struct {
 	id  *big.Int
 	rk  *big.Int
@@ -30,6 +35,13 @@ type KFrag struct {
 	U_1 *ecdsa.PublicKey
 	z_1 *big.Int
 	z_2 *big.Int
+}
+
+type CFrag struct {
+	E_1 *ecdsa.PublicKey
+	V_1 *ecdsa.PublicKey
+	id  *big.Int
+	X_A *ecdsa.PublicKey
 }
 
 func Encapsulate(pubKey *ecdsa.PublicKey) (keyBytes []byte, capsule *Capsule, err error) {
@@ -189,4 +201,35 @@ func ReKeyGen(aPubKey *ecdsa.PublicKey, aPriKey *ecdsa.PrivateKey, bPubKey *ecds
 		KF = append(KF, kFrag)
 	}
 	return KF, nil
+}
+
+func ReEncapsulate(kFrag KFrag, capsule *Capsule) (*CFrag, error) {
+	err := CheckCapsule(capsule)
+	if err != nil {
+		return nil, err
+	}
+	cFrag := CFrag{
+		E_1: curve.PointScalarMul(capsule.E, kFrag.rk),
+		V_1: curve.PointScalarMul(capsule.V, kFrag.rk),
+		id:  kFrag.id,
+		X_A: kFrag.X_A,
+	}
+	return &cFrag, nil
+}
+
+func ReEncrypt(KF []KFrag, cipher *Cipher_before_re) (*Cipher_after_re, error) {
+	CF := []CFrag{}
+	l := len(KF)
+	for i := 0; i < l; i++ {
+		cFrag, err := ReEncapsulate(KF[i], cipher.Capsule)
+		if err != nil {
+			return nil, err
+		}
+		CF = append(CF, *cFrag)
+	}
+	re_cipher := &Cipher_after_re{
+		CF:         CF,
+		CipherText: cipher.CipherText,
+	}
+	return re_cipher, nil
 }
