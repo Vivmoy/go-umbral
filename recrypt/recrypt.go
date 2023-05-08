@@ -139,7 +139,7 @@ func ReKeyGen(aPubKey *ecdsa.PublicKey, aPriKey *ecdsa.PrivateKey, bPubKey *ecds
 	if err != nil {
 		return nil, err
 	}
-	// get d = H3(X_A,pk_b,pk_b^(X_A))
+	// get d = H3(X_A,pk_b,pk_b^(x_A))
 	d := utils.HashToCurve(
 		utils.ConcatBytes(
 			curve.PointToBytes(X_A),
@@ -200,6 +200,7 @@ func ReKeyGen(aPubKey *ecdsa.PublicKey, aPriKey *ecdsa.PrivateKey, bPubKey *ecds
 		}
 		KF = append(KF, kFrag)
 	}
+	// KF长度为N
 	return KF, nil
 }
 
@@ -231,5 +232,75 @@ func ReEncrypt(KF []KFrag, cipher *Cipher_before_re) (*Cipher_after_re, error) {
 		CF:         CF,
 		CipherText: cipher.CipherText,
 	}
+	// re_cipher中CF长度为KF的长度，即默认为N
 	return re_cipher, nil
+}
+
+func DecapsulateFrags(bPriKey *ecdsa.PrivateKey, aPubKey *ecdsa.PublicKey, CF []CFrag) ([]byte, error) {
+	// get D = H6(pk_a,pk_b,pk_a^b)
+	D := utils.HashToCurve(
+		utils.ConcatBytes(
+			curve.PointToBytes(aPubKey),
+			utils.ConcatBytes(
+				curve.PointToBytes(&bPriKey.PublicKey),
+				curve.PointToBytes(curve.PointScalarMul(aPubKey, bPriKey.D)))))
+	// 此处假设传入的CF切片长度为t
+	t := len(CF)
+	s_x := []*big.Int{}
+	for i := 0; i < t; i++ {
+		s_x_i := utils.HashToCurve(
+			utils.ConcatBytes(
+				CF[i].id.Bytes(),
+				D.Bytes()))
+		s_x = append(s_x, s_x_i)
+	}
+	lamda_S := []*big.Int{}
+	for i := 1; i <= t; i++ {
+		lamda_i_S := big.NewInt(1)
+		for j := 1; j <= t; j++ {
+			if j == i {
+				continue
+			} else {
+				lamda_i_S = math.BigIntMul(lamda_i_S, (math.BigIntDiv(s_x[j-1], math.BigIntSub(s_x[j-1], s_x[i-1]))))
+			}
+		}
+		lamda_S = append(lamda_S, lamda_i_S)
+	}
+	E := curve.PointScalarMul(CF[0].E_1, lamda_S[0])
+	V := curve.PointScalarMul(CF[0].V_1, lamda_S[0])
+	for i := 1; i < t; i++ {
+		E = curve.PointScalarAdd(E, curve.PointScalarMul(CF[i].E_1, lamda_S[i]))
+		V = curve.PointScalarAdd(V, curve.PointScalarMul(CF[i].V_1, lamda_S[i]))
+	}
+	// get d = H3(X_A,pk_b,X_A^b)
+	d := utils.HashToCurve(
+		utils.ConcatBytes(
+			curve.PointToBytes(CF[0].X_A),
+			utils.ConcatBytes(
+				curve.PointToBytes(&bPriKey.PublicKey),
+				curve.PointToBytes(curve.PointScalarMul(CF[0].X_A, bPriKey.D)))))
+	point := curve.PointScalarMul(curve.PointScalarAdd(E, V), d)
+	keyBytes, err := utils.Sha3Hash(curve.PointToBytes(point))
+	if err != nil {
+		return nil, err
+	}
+	return keyBytes, nil
+}
+
+func DecryptFrags(aPubKey *ecdsa.PublicKey, bPriKey *ecdsa.PrivateKey, re_cipher *Cipher_after_re, t int) (plainText []byte, err error) {
+	// 此处假设传入的CF切片长度为默认的N
+	CF := []CFrag{}
+	for i := 0; i < t; i++ {
+		CF = append(CF, re_cipher.CF[i])
+	}
+	keyBytes, err := DecapsulateFrags(bPriKey, aPubKey, CF)
+	if err != nil {
+		return nil, err
+	}
+	key := hex.EncodeToString(keyBytes)
+	plainText, err = GCMDecrypt(re_cipher.CipherText, key[:32], keyBytes[:12], nil)
+	if err != nil {
+		return nil, err
+	}
+	return plainText, err
 }
