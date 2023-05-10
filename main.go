@@ -30,7 +30,7 @@ func main() {
 	if err5 != nil {
 		fmt.Println("bKeyGen() error:", err5.Error())
 	}
-	KF, err6 := recrypt.ReKeyGen(apub, apri, bpub, 10, 5)
+	KF, err6 := recrypt.ReKeyGen(apri, bpub, 10, 5)
 	if err6 != nil {
 		fmt.Println("ReKeyGen() error:", err6.Error())
 	}
@@ -38,6 +38,9 @@ func main() {
 	if err7 != nil {
 		fmt.Println("ReEncrypt() error:", err7.Error())
 	}
+
+	// bug点
+	// 不是cipher_text的问题
 	plain2, err8 := recrypt.DecryptFrags(apub, bpri, cipher_after, 5)
 	if err8 != nil {
 		fmt.Println("DecryptFrags() error:", err8.Error())

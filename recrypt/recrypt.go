@@ -29,7 +29,7 @@ type Cipher_after_re struct {
 }
 
 type KFrag struct {
-	id  *big.Int
+	id  *ecdsa.PrivateKey
 	rk  *big.Int
 	X_A *ecdsa.PublicKey
 	U_1 *ecdsa.PublicKey
@@ -40,7 +40,7 @@ type KFrag struct {
 type CFrag struct {
 	E_1 *ecdsa.PublicKey
 	V_1 *ecdsa.PublicKey
-	id  *big.Int
+	id  *ecdsa.PrivateKey
 	X_A *ecdsa.PublicKey
 }
 
@@ -131,7 +131,7 @@ func CheckCapsule(capsule *Capsule) (err error) {
 	return fmt.Errorf("%s", "Capsule not match")
 }
 
-func ReKeyGen(aPubKey *ecdsa.PublicKey, aPriKey *ecdsa.PrivateKey, bPubKey *ecdsa.PublicKey, N int, t int) ([]KFrag, error) {
+func ReKeyGen(aPriKey *ecdsa.PrivateKey, bPubKey *ecdsa.PublicKey, N int, t int) ([]KFrag, error) {
 	if t < 2 {
 		return nil, fmt.Errorf("%s", "t must bigger than 1")
 	}
@@ -142,22 +142,22 @@ func ReKeyGen(aPubKey *ecdsa.PublicKey, aPriKey *ecdsa.PrivateKey, bPubKey *ecds
 	// get d = H3(X_A,pk_b,pk_b^(x_A))
 	d := utils.HashToCurve(
 		utils.ConcatBytes(
-			curve.PointToBytes(X_A),
 			utils.ConcatBytes(
-				curve.PointToBytes(bPubKey),
-				curve.PointToBytes(curve.PointScalarMul(bPubKey, x_A.D)))))
+				curve.PointToBytes(X_A),
+				curve.PointToBytes(bPubKey)),
+			curve.PointToBytes(curve.PointScalarMul(bPubKey, x_A.D))))
 	coefficients, err := utils.GetCoefficients(aPriKey.D, d, t)
-	fmt.Println("coefficients:", coefficients)
+	//fmt.Println("coefficients:", coefficients)
 	if err != nil {
 		return nil, err
 	}
 	// get D = H6(pk_a,pk_b,pk_b^a)
 	D := utils.HashToCurve(
 		utils.ConcatBytes(
-			curve.PointToBytes(aPubKey),
 			utils.ConcatBytes(
-				curve.PointToBytes(bPubKey),
-				curve.PointToBytes(curve.PointScalarMul(bPubKey, aPriKey.D)))))
+				curve.PointToBytes(&aPriKey.PublicKey),
+				curve.PointToBytes(bPubKey)),
+			curve.PointToBytes(curve.PointScalarMul(bPubKey, aPriKey.D))))
 	KF := []KFrag{}
 	for i := 0; i < N; i++ {
 		Y, y, err := curve.KeyGen()
@@ -171,27 +171,27 @@ func ReKeyGen(aPubKey *ecdsa.PublicKey, aPriKey *ecdsa.PrivateKey, bPubKey *ecds
 		// get s_x = H5(id,D)
 		s_x := utils.HashToCurve(
 			utils.ConcatBytes(
-				id.X.Bytes(),
+				id.D.Bytes(),
 				D.Bytes()))
 		rk := utils.GetPolynomialValue(coefficients, s_x)
 		U_1 := curve.BigIntMulBase(rk)
 		// get z_1 = H4(Y,id,pk_a,pk_b,U_1,X_A)
 		z_1 := utils.HashToCurve(
 			utils.ConcatBytes(
-				curve.PointToBytes(Y),
 				utils.ConcatBytes(
-					id.D.Bytes(),
 					utils.ConcatBytes(
-						curve.PointToBytes(aPubKey),
 						utils.ConcatBytes(
-							curve.PointToBytes(bPubKey),
 							utils.ConcatBytes(
-								curve.PointToBytes(U_1),
-								curve.PointToBytes(X_A)))))))
+								curve.PointToBytes(Y),
+								id.D.Bytes()),
+							curve.PointToBytes(&aPriKey.PublicKey)),
+						curve.PointToBytes(bPubKey)),
+					curve.PointToBytes(U_1)),
+				curve.PointToBytes(X_A)))
 		// get z_2 = y - a × z_1
 		z_2 := math.BigIntSub(y.D, math.BigIntMul(aPriKey.D, z_1))
 		kFrag := KFrag{
-			id:  id.D,
+			id:  id,
 			rk:  rk,
 			X_A: X_A,
 			U_1: U_1,
@@ -240,17 +240,17 @@ func DecapsulateFrags(bPriKey *ecdsa.PrivateKey, aPubKey *ecdsa.PublicKey, CF []
 	// get D = H6(pk_a,pk_b,pk_a^b)
 	D := utils.HashToCurve(
 		utils.ConcatBytes(
-			curve.PointToBytes(aPubKey),
 			utils.ConcatBytes(
-				curve.PointToBytes(&bPriKey.PublicKey),
-				curve.PointToBytes(curve.PointScalarMul(aPubKey, bPriKey.D)))))
+				curve.PointToBytes(aPubKey),
+				curve.PointToBytes(&bPriKey.PublicKey)),
+			curve.PointToBytes(curve.PointScalarMul(aPubKey, bPriKey.D))))
 	// 此处假设传入的CF切片长度为t
 	t := len(CF)
 	s_x := []*big.Int{}
 	for i := 0; i < t; i++ {
 		s_x_i := utils.HashToCurve(
 			utils.ConcatBytes(
-				CF[i].id.Bytes(),
+				CF[i].id.D.Bytes(),
 				D.Bytes()))
 		s_x = append(s_x, s_x_i)
 	}
@@ -261,7 +261,9 @@ func DecapsulateFrags(bPriKey *ecdsa.PrivateKey, aPubKey *ecdsa.PublicKey, CF []
 			if j == i {
 				continue
 			} else {
-				lamda_i_S = math.BigIntMul(lamda_i_S, (math.BigIntDiv(s_x[j-1], math.BigIntSub(s_x[j-1], s_x[i-1]))))
+				// bug点
+				// a/b要通过a乘b的逆实现，不能通过除法
+				lamda_i_S = math.BigIntMul(lamda_i_S, (math.BigIntMul(s_x[j-1], math.GetInvert(math.BigIntSub(s_x[j-1], s_x[i-1])))))
 			}
 		}
 		lamda_S = append(lamda_S, lamda_i_S)
@@ -275,10 +277,10 @@ func DecapsulateFrags(bPriKey *ecdsa.PrivateKey, aPubKey *ecdsa.PublicKey, CF []
 	// get d = H3(X_A,pk_b,X_A^b)
 	d := utils.HashToCurve(
 		utils.ConcatBytes(
-			curve.PointToBytes(CF[0].X_A),
 			utils.ConcatBytes(
-				curve.PointToBytes(&bPriKey.PublicKey),
-				curve.PointToBytes(curve.PointScalarMul(CF[0].X_A, bPriKey.D)))))
+				curve.PointToBytes(CF[0].X_A),
+				curve.PointToBytes(&bPriKey.PublicKey)),
+			curve.PointToBytes(curve.PointScalarMul(CF[0].X_A, bPriKey.D))))
 	point := curve.PointScalarMul(curve.PointScalarAdd(E, V), d)
 	keyBytes, err := utils.Sha3Hash(curve.PointToBytes(point))
 	if err != nil {

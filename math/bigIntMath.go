@@ -24,12 +24,6 @@ func BigIntMul(a, b *big.Int) (res *big.Int) {
 	return
 }
 
-func BigIntDiv(a, b *big.Int) (res *big.Int) {
-	res = new(big.Int).Div(a, b)
-	res.Mod(res, curve.N)
-	return
-}
-
 func GetInvert(a *big.Int) (res *big.Int) {
 	res = new(big.Int).ModInverse(a, curve.N)
 	return
