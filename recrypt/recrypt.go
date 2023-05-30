@@ -292,9 +292,14 @@ func DecapsulateFrags(bPriKey *ecdsa.PrivateKey, aPubKey *ecdsa.PublicKey, CF []
 func DecryptFrags(aPubKey *ecdsa.PublicKey, bPriKey *ecdsa.PrivateKey, re_cipher *Cipher_after_re, t int) (plainText []byte, err error) {
 	// 此处假设传入的CF切片长度为默认的N
 	CF := []CFrag{}
-	for i := 0; i < t; i++ {
-		CF = append(CF, re_cipher.CF[i])
-	}
+	// for i := 0; i < t; i++ {
+	// 	CF = append(CF, re_cipher.CF[i])
+	// }
+	CF = append(CF, re_cipher.CF[1])
+	CF = append(CF, re_cipher.CF[9])
+	CF = append(CF, re_cipher.CF[7])
+	CF = append(CF, re_cipher.CF[4])
+	CF = append(CF, re_cipher.CF[3])
 	keyBytes, err := DecapsulateFrags(bPriKey, aPubKey, CF)
 	if err != nil {
 		return nil, err
