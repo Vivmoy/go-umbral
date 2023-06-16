@@ -2,12 +2,18 @@ package utils
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/md5"
 	"crypto/rand"
+	"encoding/hex"
 	"goUmbral/curve"
 	"goUmbral/math"
+	"io"
+	"log"
 	"math/big"
+	"os"
 
 	"golang.org/x/crypto/sha3"
 )
@@ -55,4 +61,39 @@ func GetPolynomialValue(coefficients []*big.Int, x *big.Int) *big.Int {
 		result = math.BigIntAdd(math.BigIntMul(result, x), coefficients[t-i-1])
 	}
 	return result
+}
+
+// Gzip
+func GzipCompress(bs []byte) []byte {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Write(bs)
+	zw.Flush()
+	zw.Close()
+
+	return buf.Bytes()
+}
+
+func GzipUnCompress(bs []byte) []byte {
+	var buf bytes.Buffer
+	bsBuf := bytes.NewBuffer(bs)
+	zr, _ := gzip.NewReader(bsBuf)
+	io.Copy(&buf, zr)
+	zr.Close()
+
+	return buf.Bytes()
+}
+
+func FileToMd5(filePath string) string {
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		log.Fatal(err)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }

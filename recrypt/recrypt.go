@@ -16,6 +16,7 @@ type Capsule struct {
 	E *ecdsa.PublicKey
 	V *ecdsa.PublicKey
 	S *big.Int
+	C *ecdsa.PublicKey
 }
 
 type Cipher_before_re struct {
@@ -35,6 +36,8 @@ type KFrag struct {
 	U_1 *ecdsa.PublicKey
 	z_1 *big.Int
 	z_2 *big.Int
+	C   *ecdsa.PublicKey
+	T   *big.Int
 }
 
 type CFrag struct {
@@ -42,9 +45,10 @@ type CFrag struct {
 	V_1 *ecdsa.PublicKey
 	id  *ecdsa.PrivateKey
 	X_A *ecdsa.PublicKey
+	T   *big.Int
 }
 
-func Encapsulate(pubKey *ecdsa.PublicKey) (keyBytes []byte, capsule *Capsule, err error) {
+func Encapsulate(pubKey *ecdsa.PublicKey, condition *big.Int) (keyBytes []byte, capsule *Capsule, err error) {
 	s := new(big.Int)
 	// generate E,V key-pairs
 	pubE, priE, err := curve.KeyGen()
@@ -60,7 +64,8 @@ func Encapsulate(pubKey *ecdsa.PublicKey) (keyBytes []byte, capsule *Capsule, er
 	// get s = v + e * H2(E || V)
 	s = math.BigIntAdd(priV.D, math.BigIntMul(priE.D, h))
 	// get (pk_A)^{e+v}
-	point := curve.PointScalarMul(pubKey, math.BigIntAdd(priE.D, priV.D))
+	point1 := curve.PointScalarMul(pubKey, math.BigIntAdd(priE.D, priV.D))
+	point := curve.PointScalarMul(point1, condition)
 	// generate aes key
 	keyBytes, err = utils.Sha3Hash(curve.PointToBytes(point))
 	if err != nil {
@@ -70,33 +75,35 @@ func Encapsulate(pubKey *ecdsa.PublicKey) (keyBytes []byte, capsule *Capsule, er
 		E: pubE,
 		V: pubV,
 		S: s,
+		C: curve.BigIntMulBase(condition),
 	}
 	return keyBytes, capsule, nil
 }
 
-func Encrypt(pubKey *ecdsa.PublicKey, message string) (cipher *Cipher_before_re, err error) {
-	keyBytes, capsule, err := Encapsulate(pubKey)
+func Encrypt(pubKey *ecdsa.PublicKey, infileName string, encfileName string, condition *big.Int) (cipher *Cipher_before_re, err error) {
+	keyBytes, capsule, err := Encapsulate(pubKey, condition)
 	if err != nil {
 		return nil, err
 	}
 	key := hex.EncodeToString(keyBytes)
 	// use aes gcm algorithm to encrypt
 	// mark keyBytes[:12] as nonce
-	cipherText, err := GCMEncrypt([]byte(message), key[:32], keyBytes[:12], nil)
+	err = OFBFileEncrypt(key[:32], keyBytes[:12], infileName, encfileName)
 	if err != nil {
 		return nil, err
 	}
 	cipher = &Cipher_before_re{
-		CipherText: cipherText,
-		Capsule:    capsule,
+		//CipherText: cipherText,
+		Capsule: capsule,
 	}
 	return cipher, nil
 }
 
 // Recreate aes key
-func Decapsulate(aPriKey *ecdsa.PrivateKey, capsule *Capsule) (keyBytes []byte, err error) {
+func Decapsulate(aPriKey *ecdsa.PrivateKey, capsule *Capsule, condition *big.Int) (keyBytes []byte, err error) {
 	point1 := curve.PointScalarAdd(capsule.E, capsule.V)
-	point := curve.PointScalarMul(point1, aPriKey.D)
+	point2 := curve.PointScalarMul(point1, aPriKey.D)
+	point := curve.PointScalarMul(point2, condition)
 	// generate aes key
 	keyBytes, err = utils.Sha3Hash(curve.PointToBytes(point))
 	if err != nil {
@@ -105,19 +112,19 @@ func Decapsulate(aPriKey *ecdsa.PrivateKey, capsule *Capsule) (keyBytes []byte, 
 	return keyBytes, nil
 }
 
-func Decrypt(aPriKey *ecdsa.PrivateKey, cipher *Cipher_before_re) (plainText []byte, err error) {
-	keyBytes, err := Decapsulate(aPriKey, cipher.Capsule)
+func Decrypt(aPriKey *ecdsa.PrivateKey, cipher *Cipher_before_re, encfileName string, decfileName string, condition *big.Int) (err error) {
+	keyBytes, err := Decapsulate(aPriKey, cipher.Capsule, condition)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	key := hex.EncodeToString(keyBytes)
 	// use aes gcm algorithm to encrypt
 	// mark keyBytes[:12] as nonce
-	plainText, err = GCMDecrypt(cipher.CipherText, key[:32], keyBytes[:12], nil)
-	return plainText, err
+	err = OFBFileDecrypt(key[:32], keyBytes[:12], encfileName, decfileName)
+	return err
 }
 
-func CheckCapsule(capsule *Capsule) (err error) {
+func CheckCapsule(capsule *Capsule, condition *big.Int) (err error) {
 	left := curve.BigIntMulBase(capsule.S)
 	h1 := utils.HashToCurve(
 		utils.ConcatBytes(
@@ -125,13 +132,16 @@ func CheckCapsule(capsule *Capsule) (err error) {
 			curve.PointToBytes(capsule.V)))
 	h2 := curve.PointScalarMul(capsule.E, h1)
 	right := curve.PointScalarAdd(capsule.V, h2)
-	if left.Equal(right) {
-		return nil
+	if !left.Equal(right) {
+		return fmt.Errorf("%s", "Capsule not match")
 	}
-	return fmt.Errorf("%s", "Capsule not match")
+	if !capsule.C.Equal(curve.BigIntMulBase(condition)) {
+		return fmt.Errorf("%s", "Condition not match")
+	}
+	return nil
 }
 
-func ReKeyGen(aPriKey *ecdsa.PrivateKey, bPubKey *ecdsa.PublicKey, N int, t int) ([]KFrag, error) {
+func ReKeyGen(aPriKey *ecdsa.PrivateKey, bPubKey *ecdsa.PublicKey, N int, t int, condition *big.Int) ([]KFrag, error) {
 	if t < 2 {
 		return nil, fmt.Errorf("%s", "t must bigger than 1")
 	}
@@ -197,6 +207,8 @@ func ReKeyGen(aPriKey *ecdsa.PrivateKey, bPubKey *ecdsa.PublicKey, N int, t int)
 			U_1: U_1,
 			z_1: z_1,
 			z_2: z_2,
+			C:   curve.BigIntMulBase(condition),
+			T:   math.BigIntMul(condition, math.GetInvert(utils.HashToCurve(curve.PointToBytes(curve.BigIntMulBase(big.NewInt(int64(t))))))),
 		}
 		KF = append(KF, kFrag)
 	}
@@ -205,15 +217,15 @@ func ReKeyGen(aPriKey *ecdsa.PrivateKey, bPubKey *ecdsa.PublicKey, N int, t int)
 }
 
 func ReEncapsulate(kFrag KFrag, capsule *Capsule) (*CFrag, error) {
-	err := CheckCapsule(capsule)
-	if err != nil {
-		return nil, err
+	if !kFrag.C.Equal(capsule.C) {
+		return nil, fmt.Errorf("%s", "condition not match")
 	}
 	cFrag := CFrag{
 		E_1: curve.PointScalarMul(capsule.E, kFrag.rk),
 		V_1: curve.PointScalarMul(capsule.V, kFrag.rk),
 		id:  kFrag.id,
 		X_A: kFrag.X_A,
+		T:   kFrag.T,
 	}
 	return &cFrag, nil
 }
@@ -261,8 +273,6 @@ func DecapsulateFrags(bPriKey *ecdsa.PrivateKey, aPubKey *ecdsa.PublicKey, CF []
 			if j == i {
 				continue
 			} else {
-				// bug点
-				// a/b要通过a乘b的逆实现，不能通过除法
 				lamda_i_S = math.BigIntMul(lamda_i_S, (math.BigIntMul(s_x[j-1], math.GetInvert(math.BigIntSub(s_x[j-1], s_x[i-1])))))
 			}
 		}
@@ -281,7 +291,9 @@ func DecapsulateFrags(bPriKey *ecdsa.PrivateKey, aPubKey *ecdsa.PublicKey, CF []
 				curve.PointToBytes(CF[0].X_A),
 				curve.PointToBytes(&bPriKey.PublicKey)),
 			curve.PointToBytes(curve.PointScalarMul(CF[0].X_A, bPriKey.D))))
-	point := curve.PointScalarMul(curve.PointScalarAdd(E, V), d)
+	condition := math.BigIntMul(CF[0].T, utils.HashToCurve(curve.PointToBytes(curve.BigIntMulBase(big.NewInt(int64(t))))))
+	point1 := curve.PointScalarMul(curve.PointScalarAdd(E, V), d)
+	point := curve.PointScalarMul(point1, condition)
 	keyBytes, err := utils.Sha3Hash(curve.PointToBytes(point))
 	if err != nil {
 		return nil, err
@@ -289,7 +301,7 @@ func DecapsulateFrags(bPriKey *ecdsa.PrivateKey, aPubKey *ecdsa.PublicKey, CF []
 	return keyBytes, nil
 }
 
-func DecryptFrags(aPubKey *ecdsa.PublicKey, bPriKey *ecdsa.PrivateKey, re_cipher *Cipher_after_re, t int) (plainText []byte, err error) {
+func DecryptFrags(aPubKey *ecdsa.PublicKey, bPriKey *ecdsa.PrivateKey, re_cipher *Cipher_after_re, t int, encfileName string, decfileName string) (err error) {
 	// 此处假设传入的CF切片长度为默认的N
 	CF := []CFrag{}
 	// for i := 0; i < t; i++ {
@@ -297,17 +309,17 @@ func DecryptFrags(aPubKey *ecdsa.PublicKey, bPriKey *ecdsa.PrivateKey, re_cipher
 	// }
 	CF = append(CF, re_cipher.CF[1])
 	CF = append(CF, re_cipher.CF[9])
-	CF = append(CF, re_cipher.CF[7])
-	CF = append(CF, re_cipher.CF[4])
-	CF = append(CF, re_cipher.CF[3])
+	CF = append(CF, re_cipher.CF[5])
+	CF = append(CF, re_cipher.CF[8])
+	CF = append(CF, re_cipher.CF[0])
 	keyBytes, err := DecapsulateFrags(bPriKey, aPubKey, CF)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	key := hex.EncodeToString(keyBytes)
-	plainText, err = GCMDecrypt(re_cipher.CipherText, key[:32], keyBytes[:12], nil)
+	err = OFBFileDecrypt(key[:32], keyBytes[:12], encfileName, decfileName)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return plainText, err
+	return err
 }
