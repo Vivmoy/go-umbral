@@ -111,7 +111,7 @@ func use_gorilla() {
 
 	data2, _ := os.ReadFile("./test_gorilla_txt/a_decrypt.txt")
 	fWrite1, _ := os.Create("./test_gorilla_txt/a_actual.txt")
-	s2 := utils.New(s1.T0)
+	s2 := utils.New(uint32(1))
 	s2.UnmarshalBinary(data2)
 	it1 := s2.Iter()
 	for it1.Next() {
