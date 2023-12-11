@@ -10,6 +10,7 @@ import (
 	"goUmbral/recrypt"
 	"goUmbral/utils"
 	"math/big"
+	"os"
 	"testing"
 )
 
@@ -98,6 +99,6 @@ func TestProof(t *testing.T) {
 			t.Log("U验证失败")
 		}
 	}
-
+	os.Remove("tmp.txt")
 	t.Log("验证成功")
 }
