@@ -30,8 +30,8 @@ type Cipher_after_re struct {
 }
 
 type KFrag struct {
-	id  *ecdsa.PrivateKey
-	rk  *big.Int
+	Id  *ecdsa.PrivateKey
+	Rk  *big.Int
 	X_A *ecdsa.PublicKey
 	U_1 *ecdsa.PublicKey
 	z_1 *big.Int
@@ -201,8 +201,8 @@ func ReKeyGen(aPriKey *ecdsa.PrivateKey, bPubKey *ecdsa.PublicKey, N int, t int,
 		// get z_2 = y - a × z_1
 		z_2 := math.BigIntSub(y.D, math.BigIntMul(aPriKey.D, z_1))
 		kFrag := KFrag{
-			id:  id,
-			rk:  rk,
+			Id:  id,
+			Rk:  rk,
 			X_A: X_A,
 			U_1: U_1,
 			z_1: z_1,
@@ -221,9 +221,9 @@ func ReEncapsulate(kFrag KFrag, capsule *Capsule) (*CFrag, error) {
 		return nil, fmt.Errorf("%s", "condition not match")
 	}
 	cFrag := CFrag{
-		E_1: curve.PointScalarMul(capsule.E, kFrag.rk),
-		V_1: curve.PointScalarMul(capsule.V, kFrag.rk),
-		id:  kFrag.id,
+		E_1: curve.PointScalarMul(capsule.E, kFrag.Rk),
+		V_1: curve.PointScalarMul(capsule.V, kFrag.Rk),
+		id:  kFrag.Id,
 		X_A: kFrag.X_A,
 		T:   kFrag.T,
 	}
